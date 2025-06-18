@@ -1,0 +1,98 @@
+import requests
+import time
+import asyncio
+import telegram
+from datetime import datetime
+
+# === CONFIGURATION ===
+API_KEY = '482a2fd5f74a4fd2b72badeb0be46e96'  # TwelveData API Key
+SYMBOLS = ['EUR/USD', 'XAU/USD', 'GBP/USD']  # Forex pairs
+INTERVALS = ['1min', '5min']
+TELEGRAM_TOKEN = '8154585077:AAHaAcQeKa2HH01vH7wa0pInNP7N3OpOS2g'
+CHAT_ID = '7919142705'
+CHECK_INTERVAL = 45  # seconds
+
+# === TELEGRAM SETUP ===
+bot = telegram.Bot(token=TELEGRAM_TOKEN)
+
+# === CANDLESTICK PATTERNS ===
+def is_bullish_engulfing(c1, c2):
+    return c1['close'] < c1['open'] and c2['close'] > c2['open'] and c2['open'] < c1['close'] and c2['close'] > c1['open']
+
+def is_bearish_engulfing(c1, c2):
+    return c1['close'] > c1['open'] and c2['close'] < c2['open'] and c2['open'] > c1['close'] and c2['close'] < c1['open']
+
+# === FETCH DATA FUNCTION ===
+def fetch_data(symbol, interval):
+    try:
+        url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval={interval}&apikey={API_KEY}&outputsize=5"
+        response = requests.get(url)
+        data = response.json()
+        if 'values' in data:
+            candles = [
+                {
+                    'open': float(c['open']),
+                    'close': float(c['close']),
+                    'high': float(c['high']),
+                    'low': float(c['low']),
+                    'datetime': c['datetime']
+                }
+                for c in data['values']
+            ]
+            return candles
+        else:
+            print(f"Error: {data}")
+            return None
+    except Exception as e:
+        print(f"Data fetch error for {symbol} ({interval}): {e}")
+        return None
+
+# === SIGNAL GENERATION ===
+def analyze(symbol):
+    candles_1m = fetch_data(symbol, '1min')
+    candles_5m = fetch_data(symbol, '5min')
+    if not candles_1m or not candles_5m:
+        return f"{symbol}: Data unavailable"
+
+    c1_1m, c2_1m = candles_1m[1], candles_1m[0]
+    c1_5m, c2_5m = candles_5m[1], candles_5m[0]
+
+    # Pattern Detection
+    sig_1m = ""
+    if is_bullish_engulfing(c1_1m, c2_1m):
+        sig_1m = "BUY"
+    elif is_bearish_engulfing(c1_1m, c2_1m):
+        sig_1m = "SELL"
+
+    sig_5m = ""
+    if is_bullish_engulfing(c1_5m, c2_5m):
+        sig_5m = "BUY"
+    elif is_bearish_engulfing(c1_5m, c2_5m):
+        sig_5m = "SELL"
+
+    # Confirmation
+    if sig_1m and sig_1m == sig_5m:
+        signal = f"{symbol}: {sig_1m} Signal 📈 (Confirmed on 1M & 5M)"
+    else:
+        signal = f"{symbol}: No signal ❌"
+    return signal
+
+# === MAIN LOOP ===
+async def run_bot():
+    while True:
+        messages = []
+        print(f"\n⏰ Checking signals at {datetime.now().strftime('%H:%M:%S')}...\n")
+        for symbol in SYMBOLS:
+            result = analyze(symbol)
+            print(result)
+            messages.append(result)
+        full_message = "\n".join(messages)
+        try:
+            await bot.send_message(chat_id=CHAT_ID, text=full_message)
+        except Exception as e:
+            print(f"Telegram error: {e}")
+        time.sleep(CHECK_INTERVAL)
+
+# === START ===
+if __name__ == "__main__":
+    asyncio.run(run_bot())
